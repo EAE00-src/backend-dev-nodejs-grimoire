@@ -1,6 +1,6 @@
-const User = require('../models/user');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const User = require('../models/user');
 //Sign Up (new user) Controller
 exports.signUp = (req, res, next) =>{
     //The request's body password is being salted 10 times before being passed
@@ -9,6 +9,7 @@ exports.signUp = (req, res, next) =>{
             email: req.body.email,
             password: hash
         });
+
         //Saving new user login information
         user.save().then(() =>{
             res.status(201).json({
@@ -16,6 +17,15 @@ exports.signUp = (req, res, next) =>{
             })
         });
     }).catch((error) =>{
+        //If there is a duplicate email
+        if(error.code === 11000){
+            return res.status(400).json({error: 'User Email already exists'})
+        }
+        //If there is a validation error
+        if(error.name === 'ValidationError'){
+            return res.status(400).json({error: 'Invalid user data provided'})
+        }
+        //Internal Server Error
         res.status(500).json({
             error: error
         })

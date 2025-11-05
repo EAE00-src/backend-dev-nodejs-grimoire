@@ -19,12 +19,11 @@ module.exports = (req, res, next) =>{
         //If an invalid or malformed token comes into play it will be denied 
         if(!decodedToken || !mongoose.Types.ObjectId.isValid(decodedToken.userId)){
             return res.status(401).json({
-                error: '❌ Invalid user ID in token'
+                error: '❌ Invalid or malformed user ID in token'
             })
         }
-
-        req.auth = {userId: decodedToken.userId}
-
+        //Passing the authenticated userId inside of req.auth, accessible by req.auth.userId
+        req.auth = {userId: decodedToken.userId};
         next();
 
     } catch(error){
