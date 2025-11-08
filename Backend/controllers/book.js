@@ -2,6 +2,7 @@ const fileSys = require('fs');
 const Book = require('../models/book');
 const mongoose = require('mongoose');
 
+
 //Validation helper function
 function isValidObjId(id){
     return mongoose.Types.ObjectId.isValid(id)
@@ -34,7 +35,7 @@ exports.getABook = (req, res, next) =>{
 //Controller to GET Top 3 Highest averageRatings
 exports.getTopRatedBooks = async (req, res, next) => {
   try {
-    const topBooks = await Book.find()
+    const topBooks = await Book.find() //averageRating -1 sorts from highest to lowest
       .sort({ averageRating: -1, _id: 1 }) //_id = tie-breaker for books with similar avg ratings
       .limit(3) //only return 3 books that qualify
       .select('title author imageUrl year genre averageRating');
@@ -52,11 +53,14 @@ exports.createABook = async (req, res, next) => {
 
     try {
         //Safely parse JSON input to prevent crashes from malformed data
-        try {
-            req.body.book = JSON.parse(req.body.book);
-        } catch {
-            return res.status(400).json({ error: 'Invalid book data format (must be valid JSON)' });
+        if(req.file){
+            try {
+                req.body.book = JSON.parse(req.body.book);
+            } catch {
+                return res.status(400).json({ error: 'Invalid book data format (must be valid JSON)' });
+            }
         }
+        
 
         //User ID check for existence and abnormalities
         if (!req.auth?.userId || !isValidObjId(req.auth.userId)) {
@@ -72,11 +76,12 @@ exports.createABook = async (req, res, next) => {
         };
 
         //Duplication Check
-        const normalize = (string) => string.trim().toLowerCase();
+        const normalizedTitle = title.trim().toLowerCase();
+        const normalizedAuthor = author.trim().toLowerCase();
 
         const existingBook = await Book.findOne({
-            title: normalize(title),
-            author: normalize(author)
+            titleNormalized: normalizedTitle,
+            authorNormalized: normalizedAuthor
         });
         if (existingBook) {
             return res.status(409).json({ error: 'This Book already exists in the database.' });
@@ -85,13 +90,14 @@ exports.createABook = async (req, res, next) => {
         //Reasonable year check
         const yearValue = Number(year);
         if(
-            Number.isNaN(yearValue) || //Is the year input a Number/integer?
-            !Number.isInteger(yearValue) || //Is the year input not a Number/integer?
+            Number.isNaN(yearValue) || //Is it not a number/integer? Reject it
+            !Number.isInteger(yearValue) || //It's not an integer? Reject it
+            yearValue < 0 || //Is it a negative integer/number? Reject it
             yearValue < 1000 || //Is the year input too old? Enforce a minimum year
             yearValue > new Date().getFullYear() //Is the year input from the future? Reject it
         ) {
             return res.status(400).json({ error: 'Year must be a valid integer between 1000 and the current year.' });
-        };//Year check end
+        };
 
         //New Book document
         const book = new Book({
@@ -116,6 +122,12 @@ exports.createABook = async (req, res, next) => {
     } catch (error) {
         //Catches any unexpected server or database errors
         console.error('Error creating book:', error);
+
+        //Duplication catch
+        if(error.code === 11000){
+           return res.status(409).json({error: 'This Book already exists in the database'})
+        };
+
         res.status(500).json({
             error: error.message || 'An unexpected error occurred while creating the book.'
         });
@@ -125,15 +137,21 @@ exports.createABook = async (req, res, next) => {
 //Controller to POST new ratings
 exports.rateABook = async (req, res, next) =>{
     const bookId = req.params.id;
-    const {grade} = req.body;
+    const grade = req.body?.rating; //Safely checks to see if req.body is undefined before accessing the rating
     const userId = req.auth.userId
 
     //Prechecks for a malformed or Invalid ObjectId 
-    if(!bookId || !isValidObjId(bookId)){
+    if(!isValidObjId(bookId)){
         return res.status(400).json({error: 'Invalid Book Id'})
     };
+    //check if grade is undefined
+    if(typeof grade === 'undefined'){
+        return res.status(400).json({error: '❌Grade is undefined.'})
+    };
+
+    const gradeNumber = Number(grade);
     //If the grade value isn't a number or is less than 0 or greater than 5, return an error
-    if(typeof grade !== 'number' || grade < 0 || grade > 5){
+    if(Number.isNaN(gradeNumber) || gradeNumber < 0 || gradeNumber > 5){
         return res.status(400).json({
             error: 'Grade must be a number and be greater than 0 and less than 5'
         })
@@ -146,15 +164,15 @@ exports.rateABook = async (req, res, next) =>{
             return res.status(404).json({error: 'Book not found'})
         };
 
-        //check if a rating already exists
+        //check if a rating from this user already exists...
         const existingRating = book.ratings.find(r => r.userId.toString() === userId);
-        //If existingRating returns to be true, reject the new rating
+        //If existingRating returns to be true, reject the new rating from the user
         if(existingRating){
             return res.status(403).json({error: 'A rating from this user already exists!'})
         };
 
         //Add new rating if it passes the existing rating check
-        book.ratings.push({ userId, grade});
+        book.ratings.push({ userId, grade: gradeNumber});
 
         //update the averageRating
         const totalRatings = book.ratings.length;
@@ -165,7 +183,7 @@ exports.rateABook = async (req, res, next) =>{
         //save the new rating
         try {
             await book.save();
-            res.status(201).json({ message: 'Rating submitted successfully!', averageRating: book.averageRating });
+            res.status(201).json({ message: 'Rating submitted successfully!', book: book.toObject() });
             } catch (error) {
             res.status(400).json({ error: error.message });
         };// end of new rating save
@@ -202,11 +220,42 @@ exports.modifyBook = async (req, res, next) =>{
         if(existingBook.userId.toString() !== userId){
             return res.status(403).json({error: 'Unauthorized request! Not the original owner'})
         };
-        //Book document
+
+        //Reasonable year check
+        const year = bookData.year ?? existingBook.year;
+        const yearValue = Number(year);
+        if(
+            Number.isNaN(yearValue) || //Is it not a number/integer? Reject it
+            !Number.isInteger(yearValue) || //It's not an integer? Reject it
+            yearValue < 0 || //Is it a negative integer/number? Reject it
+            yearValue < 1000 || //Is the year input too old? Enforce a minimum year
+            yearValue > new Date().getFullYear() //Is the year input from the future? Reject it
+        ) {
+            return res.status(400).json({ error: 'Year must be a valid integer between 1000 and the current year.' });
+        };
+
+        //Duplication Check (excluding the current book)
+        const normalize = (string) => string.trim().toLowerCase();
+        const normalizedTitle = normalize(bookData.title ?? existingBook.title);
+        const normalizedAuthor = normalize(bookData.author ?? existingBook.author)
+
+        const duplicateBook = await Book.findOne({
+            titleNormalized: normalizedTitle,
+            authorNormalized: normalizedAuthor,
+            _id: {$ne: bookId}
+        });
+        if(duplicateBook){
+            return res.status(409).json({error: 'A book with this title and author already exists.'})
+        }
+
+        //update Book document
         const bookUpdate = {
             title: bookData.title ?? existingBook.title,
             author: bookData.author ?? existingBook.author,
+                titleNormalized: normalizedTitle, //update normalized fields as well
+                authorNormalized: normalizedAuthor,
             genre: bookData.genre ?? existingBook.genre,
+            year: bookData.year ?? existingBook.year,
             imageUrl: req.file ? //is there a file attached?
                 `${url}/images/${req.file.filename}` //if so take the new file data
                 : (bookData.imageUrl ?? existingBook.imageUrl), //if not then see if the image URL has changed
@@ -217,46 +266,53 @@ exports.modifyBook = async (req, res, next) =>{
         await Book.updateOne({_id: bookId}, bookUpdate)
         res.status(200).json({message: '✅Book updated successfully!'})
     } catch (error) {
+        if(error.code === 11000){
+           return res.status(409).json({error: 'This Book already exists in the database'})
+        };
+
         res.status(500).json({error: error.message})
     }
 
-    //Find existing book
-    /*Book.findById(req.params.id).then((existingBook) =>{
-        if(!existingBook){
-            return res.status(404).json({error: 'Book not found!'})
-        }
-        //Ownership match
-        if(existingBook.userId.toString() !== req.auth.userId){
-            return res.status(403).json({error: 'Unauthorized request! Not the original owner'})
-        }
-
-        const bookUpdate = {
-        title: req.body.title ?? existingBook.title,
-        author: req.body.author ?? existingBook.author,
-        genre: req.body.genre ?? existingBook.genre,
-        imageUrl: req.file ? 
-            `${url}/images/${req.file.filename}`
-            : (req.body.imageUrl ?? existingBook.imageUrl),
-        ratings: existingBook.ratings,
-        averageRating: existingBook.averageRating
-    };
-
-    //Update the Book document
-    Book.updateOne({_id: req.params.id}, bookUpdate).then(() =>{
-        res.status(200).json({
-            message: 'Book updated successfully!'
-        })
-    }).catch((error) =>{
-        res.status(400).json({error: 'Book update failed!'})
-    });
-    }).catch((error) =>{
-        res.status(500).json({ error: error.message})
-    })*/
-
-    
 };
 
 /*** DELETE Controller ***/
 exports.deleteBook = async (req, res, next) =>{
+    const bookId = req.params.id;
+    
+    try {
 
+        //Prechecks for a malformed or Invalid ObjectId 
+        if(!isValidObjId(bookId)){
+            return res.status(400).json({error: 'Invalid Book Id'})
+        };
+
+        //Find Book
+        const book = await Book.findById(bookId);
+        if(!book){
+            return res.status(404).json({error: 'Book not found'})
+        };
+
+        //Ownership check
+        if(book.userId.toString() !== req.auth.userId){
+            return res.status(403).json({error: 'Unauthorized! This user is not the original owner'})
+        };
+        //Image deletion (Checks if the image is locally stored or an external URL)
+        if(book.imageUrl && book.imageUrl.includes('/images/')){
+            const filename = book.imageUrl.split('/images/')[1];
+            try {
+                await fileSys.promises.unlink(`images/${filename}`)
+            } catch (err) {
+                console.error('Image deletion failed: ', err);
+                    return res.status(500).json({error: 'Image deletion failed!'})
+            }
+            
+        };
+
+        //Delete Book Document (Finally)
+        await Book.deleteOne({_id: bookId});
+        res.status(200).json({message: 'Book Deletion successful!'});
+    } catch (error) {
+        console.error("Error deleting Book: ", error);
+        res.status(500).json({error: error.message});
+    }
 };

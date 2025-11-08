@@ -21,8 +21,9 @@ const app = express();
 app.use(cors());
 
 //MongoDB Atlus connection & status
-mongoose.connect(mongoUri).then(() => {
-    console.log('✅ Connection to MongoDB Atlus successful!');
+mongoose.connect(mongoUri)
+.then(() => {
+    console.log('✅ Connection to MongoDB Atlas successful!');
 }).catch((error) =>{
     console.error(`❌ Connection failed: ${error}`);
 });
