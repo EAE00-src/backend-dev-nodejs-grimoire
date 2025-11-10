@@ -21,4 +21,14 @@ const storage = multer.diskStorage({
     }
 });
 
+//File filtering for additional enforcement
+const fileFilter = (req, file, callback) =>{
+    if(MIME_TYPES[file.mimetype]){
+        callback(null, true); //accept the new file since it is an allowed mimetype
+    } else{
+        //reject the file if it isn't an expected image mimetype or not an image at all
+        callback(new Error('Invalid file type! Only images are allowed! (jpeg, jpg, png, webp)'), false);
+    }
+}
+
 module.exports = multer({storage: storage}).single('image');

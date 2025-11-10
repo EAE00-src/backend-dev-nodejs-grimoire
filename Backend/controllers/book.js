@@ -1,4 +1,5 @@
 const fileSys = require('fs');
+const path = require('path');
 const Book = require('../models/book');
 const mongoose = require('mongoose');
 
@@ -84,6 +85,15 @@ exports.createABook = async (req, res, next) => {
             authorNormalized: normalizedAuthor
         });
         if (existingBook) {
+            if(req.file){
+                try {
+                    await fileSys.promises.unlink(req.file.path); //deletes whichever file is chosen by Sharp middleware
+                    console.log('✅ Rejected image file deleted successfully!');
+                } catch (error) {
+                    console.error('⚠ Failed to delete rejected book image!', error);
+                }
+                
+            }
             return res.status(409).json({ error: 'This Book already exists in the database.' });
         };
 
@@ -263,7 +273,24 @@ exports.modifyBook = async (req, res, next) =>{
             averageRating: existingBook.averageRating //preserve existing ratings
         };
 
-        await Book.updateOne({_id: bookId}, bookUpdate)
+        await Book.updateOne({_id: bookId}, bookUpdate);
+
+        //If there is a new file, get rid of the old one
+        if(req.file && existingBook.imageUrl){
+            try{
+                //get the old imageUrl
+                const oldFilename = path.basename(existingBook.imageUrl);
+                const oldFilePath = path.resolve(__dirname, '../images', oldFilename);
+
+                //Delete the old file
+                await fileSys.promises.unlink(oldFilePath);
+                console.log('✅ Original image deleted from disk successfully!');
+            } catch (error){
+                console.error('❌ Deletion of original image failed: ', error);
+            }
+        }
+
+        
         res.status(200).json({message: '✅Book updated successfully!'})
     } catch (error) {
         if(error.code === 11000){
