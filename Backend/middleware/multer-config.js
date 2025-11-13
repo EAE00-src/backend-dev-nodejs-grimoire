@@ -31,4 +31,21 @@ const fileFilter = (req, file, callback) =>{
     }
 }
 
-module.exports = multer({storage: storage}).single('image');
+const multerConfig = multer({
+    storage: storage,
+    fileFilter: fileFilter
+}).single('image');
+
+//Error handler for Multer
+const multerErrorHandler = (err, req, res, next) =>{
+    if(err instanceof multer.MulterError){
+        //Multer specific errors
+        return res.status(400).json({message: err.message})
+    } else if(err){
+        //General errors (incorrect file type)
+        return res.status(400).json({message: err.message})
+    };
+    next();
+}
+
+module.exports = {multerConfig, multerErrorHandler};
