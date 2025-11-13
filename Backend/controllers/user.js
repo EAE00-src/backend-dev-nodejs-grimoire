@@ -2,34 +2,33 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 //Sign Up (new user) Controller
-exports.signUp = (req, res, next) =>{
-    //The request's body password is being salted 10 times before being passed
-    bcrypt.hash(req.body.password, 10).then((hash) =>{
-        const user = new User ({
-            email: req.body.email,
-            password: hash
-        });
+exports.signUp = async (req, res, next) =>{
 
-        //Saving new user login information
-        user.save().then(() =>{
-            res.status(201).json({
-                message: 'User added successfully'
-            })
-        });
-    }).catch((error) =>{
-        //If there is a duplicate email
+    try {
+        //The request's body password is being salted 10 times before passing--
+            // --the hashed password to be saved
+       const hashPW = await bcrypt.hash(req.body.password, 10);
+       const user = new User({
+        email: req.body.email,
+        password: hashPW
+       });
+       await user.save();
+       res.status(201).json({message: '✅New User created successfully!'})
+
+    } catch (error) {
+        //duplicate email error
         if(error.code === 11000){
-            return res.status(400).json({error: 'User Email already exists'})
-        }
-        //If there is a validation error
+            return res.status(400).json({error: 'User email already exists'})
+        };
+        //If the email can't be validated
         if(error.name === 'ValidationError'){
-            return res.status(400).json({error: 'Invalid user data provided'})
-        }
-        //Internal Server Error
-        res.status(500).json({
-            error: error
-        })
-    });
+            return res.status(400).json({error: '❌Invalid user data provided'})
+        };
+
+        //fallback internal server error
+        res.status(500).json({error: 'Internal server error'})
+    }
+    
 }
 
 //Login (existing user) Controller
